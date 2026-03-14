@@ -1,4 +1,4 @@
-# main.py - ПОЛНАЯ ВЕРСИЯ БЕЗ ФОТО
+# main.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
@@ -38,6 +38,10 @@ class RejectState(StatesGroup):
 
 class UsernameState(StatesGroup):
     waiting_for_username = State()
+
+# 👇 ВОТ ЭТОТ КЛАСС БЫЛ ПРОПУЩЕН - ТЕПЕРЬ ОН ЕСТЬ
+class BroadcastState(StatesGroup):
+    waiting_for_message = State()
 
 # === КЛАВИАТУРЫ ===
 def main_keyboard(user_id=None):
@@ -387,9 +391,6 @@ async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
         "Отправьте сообщение для рассылки всем пользователям:",
         parse_mode="HTML"
     )
-    
-    class BroadcastState(StatesGroup):
-        waiting_for_message = State()
     
     await state.set_state(BroadcastState.waiting_for_message)
     await callback.answer()
