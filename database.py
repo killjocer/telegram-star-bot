@@ -1,6 +1,8 @@
-# database.py - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ
+# database.py - ПОЛНАЯ ВЕРСИЯ
 import sqlite3
 import datetime
+import random
+import string
 
 class Database:
     def __init__(self):
@@ -32,11 +34,12 @@ class Database:
                 status TEXT DEFAULT 'pending',
                 admin_comment TEXT,
                 created_at TEXT,
-                processed_at TEXT
+                processed_at TEXT,
+                gift_code TEXT
             )
         ''')
         
-        # Таблица отзывов с модерацией
+        # Таблица отзывов
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS reviews (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,6 +49,18 @@ class Database:
                 status TEXT DEFAULT 'pending',
                 created_at TEXT,
                 moderated_at TEXT
+            )
+        ''')
+        
+        # Таблица промокодов
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS promocodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE,
+                discount INTEGER,
+                expires_at TEXT,
+                uses_left INTEGER,
+                created_at TEXT
             )
         ''')
         self.conn.commit()
@@ -102,9 +117,10 @@ class Database:
         return self.cursor.fetchone()
     
     def approve_payment(self, payment_id, admin_id):
+        gift_code = self.generate_gift_code()
         self.cursor.execute(
-            "UPDATE payments SET status = 'approved', processed_at = ? WHERE id = ?",
-            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), payment_id)
+            "UPDATE payments SET status = 'approved', processed_at = ?, gift_code = ? WHERE id = ?",
+            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gift_code, payment_id)
         )
         self.conn.commit()
     
@@ -115,6 +131,11 @@ class Database:
         )
         self.conn.commit()
     
+    def generate_gift_code(self):
+        """Генерация случайного кода для подарка"""
+        letters = string.ascii_uppercase + string.digits
+        return ''.join(random.choice(letters) for _ in range(8))
+    
     def get_user_payments(self, user_id):
         self.cursor.execute(
             """SELECT item_name, amount_rub, target_username, status, created_at 
@@ -122,6 +143,37 @@ class Database:
                WHERE user_id = ? 
                ORDER BY created_at DESC""",
             (user_id,)
+        )
+        return self.cursor.fetchall()
+    
+    def get_sales_stats(self):
+        """Статистика продаж для админа"""
+        self.cursor.execute(
+            "SELECT COUNT(*), SUM(amount_rub) FROM payments WHERE status = 'approved'"
+        )
+        result = self.cursor.fetchone()
+        total_sales = result[0] or 0
+        total_amount = result[1] or 0
+        avg_check = total_amount // total_sales if total_sales > 0 else 0
+        
+        self.cursor.execute(
+            "SELECT item_name, COUNT(*) FROM payments WHERE status = 'approved' GROUP BY item_name ORDER BY COUNT(*) DESC LIMIT 1"
+        )
+        popular = self.cursor.fetchone()
+        popular_item = popular[0] if popular else "нет данных"
+        
+        return (total_sales, total_amount, avg_check, popular_item)
+    
+    def get_top_buyers(self, limit=10):
+        """Топ покупателей по количеству покупок"""
+        self.cursor.execute(
+            """SELECT user_id, username, COUNT(*) as purchase_count 
+               FROM payments 
+               WHERE status = 'approved' 
+               GROUP BY user_id 
+               ORDER BY purchase_count DESC 
+               LIMIT ?""",
+            (limit,)
         )
         return self.cursor.fetchall()
     
