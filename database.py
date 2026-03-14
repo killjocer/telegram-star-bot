@@ -1,4 +1,4 @@
-# database.py - ПОЛНАЯ ВЕРСИЯ
+# database.py - С ТАБЛИЦЕЙ ЦЕН
 import sqlite3
 import datetime
 import random
@@ -9,6 +9,7 @@ class Database:
         self.conn = sqlite3.connect('stars_bot.db', check_same_thread=False)
         self.cursor = self.conn.cursor()
         self.create_tables()
+        self.init_prices()
     
     def create_tables(self):
         # Таблица пользователей
@@ -63,6 +64,74 @@ class Database:
                 created_at TEXT
             )
         ''')
+        
+        # Таблица цен на товары
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_name TEXT UNIQUE,
+                price INTEGER,
+                updated_at TEXT
+            )
+        ''')
+        self.conn.commit()
+    
+    def init_prices(self):
+        """Инициализация цен по умолчанию"""
+        default_prices = [
+            ('мишка', 24),
+            ('сердце', 24),
+            ('подарок', 35),
+            ('stars_50', 75),
+            ('stars_100', 135),
+            ('stars_150', 203)
+        ]
+        
+        for item_name, price in default_prices:
+            self.cursor.execute(
+                "INSERT OR IGNORE INTO prices (item_name, price, updated_at) VALUES (?, ?, ?)",
+                (item_name, price, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+        self.conn.commit()
+    
+    def get_gift_prices(self):
+        """Получить цены на подарки"""
+        prices = {}
+        for gift in ['мишка', 'сердце', 'подарок']:
+            self.cursor.execute(
+                "SELECT price FROM prices WHERE item_name = ?",
+                (gift,)
+            )
+            result = self.cursor.fetchone()
+            prices[gift] = result[0] if result else 0
+        return prices
+    
+    def get_stars_prices(self):
+        """Получить цены на звёзды"""
+        prices = {}
+        for stars in [50, 100, 150]:
+            self.cursor.execute(
+                "SELECT price FROM prices WHERE item_name = ?",
+                (f'stars_{stars}',)
+            )
+            result = self.cursor.fetchone()
+            prices[stars] = result[0] if result else 0
+        return prices
+    
+    def update_gift_price(self, gift_name, new_price):
+        """Обновить цену подарка"""
+        self.cursor.execute(
+            "UPDATE prices SET price = ?, updated_at = ? WHERE item_name = ?",
+            (new_price, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gift_name)
+        )
+        self.conn.commit()
+    
+    def update_stars_price(self, stars_count, new_price):
+        """Обновить цену звёзд"""
+        self.cursor.execute(
+            "UPDATE prices SET price = ?, updated_at = ? WHERE item_name = ?",
+            (new_price, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), f'stars_{stars_count}')
+        )
         self.conn.commit()
     
     def add_user(self, user_id, username, first_name):
@@ -225,3 +294,30 @@ class Database:
             (user_id,)
         )
         return self.cursor.fetchone()[0] > 0
+    
+    # Промокоды
+    def create_promo(self, code, discount, uses):
+        expires = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        self.cursor.execute(
+            "INSERT INTO promocodes (code, discount, expires_at, uses_left, created_at) VALUES (?, ?, ?, ?, ?)",
+            (code, discount, expires, uses, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def check_promo(self, code):
+        self.cursor.execute(
+            "SELECT * FROM promocodes WHERE code = ? AND uses_left > 0 AND expires_at > ?",
+            (code, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        return self.cursor.fetchone()
+    
+    def get_all_promos(self):
+        self.cursor.execute(
+            "SELECT * FROM promocodes ORDER BY created_at DESC"
+        )
+        return self.cursor.fetchall()
+    
+    def apply_promo_to_user(self, user_id, promo_id, discount):
+        # Здесь логика применения скидки к пользователю
+        pass
