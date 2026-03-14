@@ -1,4 +1,4 @@
-# main.py - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ
+# main.py - ПОЛНАЯ ВЕРСИЯ БЕЗ ФОТО
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
@@ -10,6 +10,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import config
 from database import Database
 import datetime
+from keep_alive import keep_alive
+
+# Запускаем веб-сервер для Railway
+keep_alive()
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -22,9 +26,6 @@ db = Database()
 # === СОСТОЯНИЯ (FSM) ===
 class ReviewStates(StatesGroup):
     waiting_for_review = State()
-
-class AdminReviewStates(StatesGroup):
-    waiting_for_review_response = State()
 
 class PaymentStates(StatesGroup):
     waiting_for_photo = State()
@@ -48,7 +49,6 @@ def main_keyboard(user_id=None):
         [InlineKeyboardButton(text="🛠 Поддержка", callback_data="support")]
     ]
     
-    # Если пользователь админ - добавляем кнопку админки
     if user_id and user_id in config.ADMIN_IDS:
         buttons.append([InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")])
     
@@ -60,6 +60,8 @@ def admin_panel_keyboard():
         [InlineKeyboardButton(text="⏳ Ожидающие платежи", callback_data="admin_payments")],
         [InlineKeyboardButton(text="⭐ Новые отзывы", callback_data="admin_reviews")],
         [InlineKeyboardButton(text="👥 Все пользователи", callback_data="admin_users")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_main")]
     ])
     return keyboard
@@ -69,6 +71,7 @@ def buy_menu_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Подарки", callback_data="buy_gifts")],
         [InlineKeyboardButton(text="⭐ Звёзды", callback_data="buy_stars")],
+        [InlineKeyboardButton(text="🎲 Мне повезёт", callback_data="lucky_gift")],
         [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_main")]
     ])
     return keyboard
@@ -79,7 +82,19 @@ def gifts_keyboard():
         [InlineKeyboardButton(text="🧸 Мишка — 24₽", callback_data="gift_мишка_24")],
         [InlineKeyboardButton(text="❤️ Сердце — 24₽", callback_data="gift_сердце_24")],
         [InlineKeyboardButton(text="🎁 Подарок — 35₽", callback_data="gift_подарок_35")],
+        [InlineKeyboardButton(text="🎨 Выбрать цвет", callback_data="gift_color")],
         [InlineKeyboardButton(text="◀ Назад", callback_data="buy_menu")]
+    ])
+    return keyboard
+
+def gift_color_keyboard():
+    """Выбор цвета для подарка"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔴 Красный", callback_data="color_красный")],
+        [InlineKeyboardButton(text="🔵 Синий", callback_data="color_синий")],
+        [InlineKeyboardButton(text="🟢 Зелёный", callback_data="color_зелёный")],
+        [InlineKeyboardButton(text="⚪ Белый", callback_data="color_белый")],
+        [InlineKeyboardButton(text="◀ Назад", callback_data="buy_gifts")]
     ])
     return keyboard
 
@@ -118,6 +133,16 @@ def reviews_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👀 Смотреть отзывы", callback_data="view_reviews")],
         [InlineKeyboardButton(text="✍️ Написать отзыв", callback_data="write_review")],
+        [InlineKeyboardButton(text="🏆 Топ покупателей", callback_data="top_buyers")],
+        [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_main")]
+    ])
+    return keyboard
+
+def support_keyboard():
+    """Кнопки в поддержке"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❓ Частые вопросы", callback_data="faq")],
+        [InlineKeyboardButton(text="💬 Чат с админом", callback_data="chat_with_admin")],
         [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_main")]
     ])
     return keyboard
@@ -300,8 +325,6 @@ async def admin_users(callback: CallbackQuery):
     
     users = db.get_all_users()
     total_users = len(users)
-    
-    # Статистика
     active_users = db.get_active_users_count()
     
     text = (
@@ -325,7 +348,87 @@ async def admin_users(callback: CallbackQuery):
     )
     await callback.answer()
 
-# === ОБРАБОТЧИКИ КОЛБЭКОВ (ОСНОВНЫЕ) ===
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats(callback: CallbackQuery):
+    """Статистика продаж"""
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("У вас нет доступа", show_alert=True)
+        return
+    
+    stats = db.get_sales_stats()
+    total_sales, total_amount, avg_check, popular_item = stats
+    
+    text = (
+        f"📊 <b>Статистика продаж</b>\n\n"
+        f"💰 Всего продаж: {total_sales}\n"
+        f"💵 Общая сумма: {total_amount}₽\n"
+        f"📈 Средний чек: {avg_check}₽\n"
+        f"🔥 Популярный товар: {popular_item}\n"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀ Назад", callback_data="admin_panel")]
+        ])
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
+    """Рассылка сообщения всем пользователям"""
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("У вас нет доступа", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "📢 <b>Рассылка</b>\n\n"
+        "Отправьте сообщение для рассылки всем пользователям:",
+        parse_mode="HTML"
+    )
+    
+    class BroadcastState(StatesGroup):
+        waiting_for_message = State()
+    
+    await state.set_state(BroadcastState.waiting_for_message)
+    await callback.answer()
+
+@dp.message(BroadcastState.waiting_for_message)
+async def process_broadcast(message: types.Message, state: FSMContext):
+    """Отправка рассылки"""
+    if message.from_user.id not in config.ADMIN_IDS:
+        await state.clear()
+        return
+    
+    broadcast_text = message.text
+    users = db.get_all_users()
+    sent = 0
+    failed = 0
+    
+    await message.answer(f"📢 Начинаю рассылку {len(users)} пользователям...")
+    
+    for user in users:
+        user_id = user[0]
+        try:
+            await bot.send_message(
+                user_id,
+                f"📢 <b>Рассылка от администратора</b>\n\n{broadcast_text}",
+                parse_mode="HTML"
+            )
+            sent += 1
+        except:
+            failed += 1
+        await asyncio.sleep(0.05)  # Чтобы не забанили
+    
+    await message.answer(
+        f"✅ Рассылка завершена!\n"
+        f"📨 Отправлено: {sent}\n"
+        f"❌ Не доставлено: {failed}"
+    )
+    await state.clear()
+
+# === ОСНОВНЫЕ ОБРАБОТЧИКИ ===
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery):
     """Возврат в главное меню"""
@@ -369,19 +472,88 @@ async def buy_stars(callback: CallbackQuery):
     )
     await callback.answer()
 
+@dp.callback_query(F.data == "lucky_gift")
+async def lucky_gift(callback: CallbackQuery, state: FSMContext):
+    """Случайный подарок"""
+    db.update_user_activity(callback.from_user.id)
+    
+    import random
+    gifts = [
+        ("Мишка", 24),
+        ("Сердце", 24),
+        ("Подарок", 35)
+    ]
+    gift_name, price = random.choice(gifts)
+    
+    await state.update_data(
+        selected_item=f"Подарок: {gift_name} (🎲 Случайный)",
+        selected_price=price
+    )
+    
+    await callback.message.edit_text(
+        f"🎲 <b>Вам выпал: {gift_name}</b>\n"
+        f"💰 Сумма: {price}₽\n\n"
+        f"📝 <b>Инструкция по оплате:</b>\n"
+        f"1️⃣ Отправьте <b>@username</b> получателя\n"
+        f"2️⃣ Переведите <b>{price}₽</b> на карту:\n"
+        f"   <code>{config.CARD_NUMBER}</code>\n"
+        f"   {config.CARD_HOLDER}\n"
+        f"3️⃣ Сделайте скриншот чека/перевода\n"
+        f"4️⃣ Отправьте фото чека в этот чат\n\n"
+        f"👉 <b>Напишите @username получателя:</b>",
+        parse_mode="HTML"
+    )
+    
+    await state.set_state(UsernameState.waiting_for_username)
+    await callback.answer()
+
+@dp.callback_query(F.data == "gift_color")
+async def gift_color(callback: CallbackQuery):
+    """Выбор цвета подарка"""
+    db.update_user_activity(callback.from_user.id)
+    await callback.message.edit_text(
+        "🎨 <b>Выберите цвет:</b>",
+        parse_mode="HTML",
+        reply_markup=gift_color_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("color_"))
+async def process_color(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора цвета"""
+    db.update_user_activity(callback.from_user.id)
+    color = callback.data.split("_")[1]
+    
+    await state.update_data(selected_color=color)
+    
+    await callback.message.edit_text(
+        f"✅ Выбран цвет: {color}\n\n"
+        f"🎁 <b>Выберите подарок:</b>",
+        reply_markup=gifts_keyboard()
+    )
+    await callback.answer()
+
 @dp.callback_query(F.data.startswith("gift_"))
 async def process_gift_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора подарка"""
     db.update_user_activity(callback.from_user.id)
     _, gift_name, price = callback.data.split("_")
     
+    data = await state.get_data()
+    color = data.get('selected_color', '')
+    
+    item_name = f"Подарок: {gift_name}"
+    if color:
+        item_name += f" ({color})"
+    
     await state.update_data(
-        selected_item=f"Подарок: {gift_name}",
+        selected_item=item_name,
         selected_price=int(price)
     )
     
     await callback.message.edit_text(
         f"🎁 <b>Вы выбрали: {gift_name}</b>\n"
+        f"{f'🎨 Цвет: {color}\n' if color else ''}"
         f"💰 Сумма: {price}₽\n\n"
         f"📝 <b>Инструкция по оплате:</b>\n"
         f"1️⃣ Отправьте <b>@username</b> получателя\n"
@@ -470,7 +642,6 @@ async def handle_payment_photo(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
     
-    # Отправляем уведомление админу
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_photo(
@@ -502,7 +673,7 @@ async def handle_payment_no_photo(message: types.Message):
 
 @dp.callback_query(F.data.startswith("approve_"))
 async def approve_payment(callback: CallbackQuery):
-    """Админ одобряет платёж - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+    """Админ одобряет платёж"""
     if callback.from_user.id not in config.ADMIN_IDS:
         await callback.answer("У вас нет прав", show_alert=True)
         return
@@ -514,31 +685,32 @@ async def approve_payment(callback: CallbackQuery):
         await callback.answer("Платёж не найден", show_alert=True)
         return
     
-    # Одобряем платёж
     db.approve_payment(payment_id, callback.from_user.id)
     
-    # Уведомляем пользователя
     user_id = payment[1]
     item_name = payment[2]
     target_username = payment[5]
+    
+    # Автовыдача товара
+    gift_code = db.generate_gift_code(item_name)
     
     try:
         await bot.send_message(
             user_id,
             f"✅ <b>Ваш платёж одобрен!</b>\n\n"
             f"🎁 {item_name}\n"
-            f"📦 Для: @{target_username}\n\n"
+            f"📦 Для: @{target_username}\n"
+            f"🔑 Код получения: <code>{gift_code}</code>\n\n"
             f"Спасибо за покупку!",
             parse_mode="HTML"
         )
     except Exception as e:
         print(f"Не удалось уведомить пользователя: {e}")
     
-    # Вместо edit_caption отправляем новое сообщение
     try:
         await callback.message.answer(
-            "✅ <b>ПЛАТЁЖ ОДОБРЕН</b>\n\n"
-            "Пользователь уведомлён.",
+            f"✅ <b>ПЛАТЁЖ #{payment_id} ОДОБРЕН</b>\n"
+            f"Код выдан: {gift_code}",
             parse_mode="HTML"
         )
     except:
@@ -659,6 +831,30 @@ async def view_reviews(callback: CallbackQuery):
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Написать отзыв", callback_data="write_review")],
+            [InlineKeyboardButton(text="🏆 Топ покупателей", callback_data="top_buyers")],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="reviews")]
+        ])
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "top_buyers")
+async def top_buyers(callback: CallbackQuery):
+    """Топ покупателей"""
+    db.update_user_activity(callback.from_user.id)
+    top_users = db.get_top_buyers(10)
+    
+    if not top_users:
+        text = "🏆 Пока нет покупателей"
+    else:
+        text = "🏆 <b>Топ покупателей:</b>\n\n"
+        for i, (user_id, username, total) in enumerate(top_users, 1):
+            username_display = f"@{username}" if username != "нет_username" else f"ID {user_id}"
+            text += f"{i}. {username_display} - {total} покупок\n"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀ Назад", callback_data="reviews")]
         ])
     )
@@ -674,7 +870,6 @@ async def write_review_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Оставлять отзывы могут только покупатели", show_alert=True)
         return
     
-    # Проверяем, не оставлял ли уже отзыв
     if db.has_user_reviewed(user_id):
         await callback.answer("❌ Вы уже оставляли отзыв", show_alert=True)
         return
@@ -704,7 +899,6 @@ async def process_review(message: types.Message, state: FSMContext):
         reply_markup=main_keyboard(message.from_user.id)
     )
     
-    # Уведомляем админов о новом отзыве
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_message(
@@ -726,11 +920,48 @@ async def support(callback: CallbackQuery):
     db.update_user_activity(callback.from_user.id)
     await callback.message.edit_text(
         "🛠 <b>Служба поддержки</b>\n\n"
-        "По всем вопросам обращайтесь к администратору:\n"
-        "@killjocer",
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=support_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "faq")
+async def faq(callback: CallbackQuery):
+    """Частые вопросы"""
+    db.update_user_activity(callback.from_user.id)
+    text = (
+        "❓ <b>Часто задаваемые вопросы:</b>\n\n"
+        "1. <b>Как оплатить?</b>\n"
+        "   Переведите нужную сумму на карту и отправьте чек\n\n"
+        "2. <b>Сколько ждать?</b>\n"
+        "   Администратор проверит платёж в течение часа\n\n"
+        "3. <b>Как получить подарок?</b>\n"
+        "   После одобрения вы получите код в сообщении\n\n"
+        "4. <b>Можно ли вернуть деньги?</b>\n"
+        "   Возврат только при отказе администратора\n\n"
+        "Остались вопросы? Напишите @killjocer"
+    )
+    await callback.message.edit_text(
+        text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_main")]
+            [InlineKeyboardButton(text="◀ Назад", callback_data="support")]
+        ])
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "chat_with_admin")
+async def chat_with_admin(callback: CallbackQuery):
+    """Чат с админом"""
+    db.update_user_activity(callback.from_user.id)
+    await callback.message.edit_text(
+        "💬 <b>Чат с администратором</b>\n\n"
+        "Напишите ваш вопрос, и администратор ответит вам в личные сообщения.\n\n"
+        "Админ: @killjocer",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀ Назад", callback_data="support")]
         ])
     )
     await callback.answer()
